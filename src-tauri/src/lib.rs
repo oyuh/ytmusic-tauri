@@ -268,8 +268,11 @@ pub fn run() {
             // Allow programmatic playback (needed for the Stream Deck "play" command) and
             // disable WebView2's built-in SMTC (HardwareMediaKeyHandling) so our souvlaki
             // session is the only one - otherwise Windows shows a duplicate "WebView2" entry.
+            // AudioServiceOutOfProcess disabled: render audio in the page's own process
+            // instead of a separate audio subprocess, so OBS's Application Audio Capture
+            // (which follows the window's process) actually finds the sound.
             .additional_browser_args(
-                "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,HardwareMediaKeyHandling --autoplay-policy=no-user-gesture-required",
+                "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,HardwareMediaKeyHandling,AudioServiceOutOfProcess --autoplay-policy=no-user-gesture-required",
             )
             .initialization_script(include_str!("../titlebar.js"))
             .initialization_script(include_str!("../media.js"))

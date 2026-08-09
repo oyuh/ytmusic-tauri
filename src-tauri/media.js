@@ -9,28 +9,29 @@
   if (window.top !== window.self) return;
 
   // Perceptual volume curve. YT Music maps its slider linearly to amplitude, so low
-  // numbers are still loud (30% is about as loud as Spotify at ~76%). Remap it so the
-  // number you set stays the same but the actual loudness follows (n/100)^3, like
-  // Spotify. Catches both the player API (our Stream Deck controls) and direct slider /
-  // keyboard changes; the value guard stops our own curved sets from re-triggering.
+  // numbers are still loud. Remap so the number you set stays the same but actual
+  // loudness follows (n/100)^2 (gentler than Spotify's ~cube so the low end doesn't
+  // drop to silence). Crucially we also feed the number back through YT's native
+  // setVolume so YT's own stored volume stays in sync, otherwise YT periodically
+  // re-applies its old value and Stream Deck / slider changes snap back.
   function installVolumeCurve() {
     const p = document.querySelector('#movie_player');
     const v = document.querySelector('video');
     if (!p || !v || !p.setVolume || p.__ytmVolCurve) return;
-    const EXP = 3;
-    let displayed = p.getVolume();
-    const clamp = (n) => Math.max(0, Math.min(100, Math.round(n)));
-    const amp = () => Math.pow(displayed / 100, EXP);
-    const apply = () => { v.volume = amp(); };
-    p.setVolume = (d) => { displayed = clamp(d); apply(); };
-    p.getVolume = () => displayed;
-    v.addEventListener('volumechange', () => {
-      if (Math.abs(v.volume - amp()) < 0.0006) return; // our own curved set
-      displayed = clamp(v.volume * 100); // external change (slider / keyboard)
-      apply();
-    });
-    apply();
     p.__ytmVolCurve = true;
+    const EXP = 2;
+    const rawSet = p.setVolume.bind(p);
+    const clamp = (n) => Math.max(0, Math.min(100, Math.round(n)));
+    let number = clamp(p.getVolume());
+    const want = () => Math.pow(number / 100, EXP);
+    p.setVolume = (d) => { number = clamp(d); rawSet(number); v.volume = want(); };
+    p.getVolume = () => number;
+    v.addEventListener('volumechange', () => {
+      if (Math.abs(v.volume - want()) < 0.0006) return; // our own curved set
+      number = clamp(v.volume * 100); // external change (slider / keyboard)
+      v.volume = want();
+    });
+    v.volume = want();
   }
 
   let last = '';
