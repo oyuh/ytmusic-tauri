@@ -19,7 +19,16 @@ Grab the latest `YT Music_x.x.x_x64-setup.exe` from [Releases](https://github.co
 
 ## Last.fm scrobbling
 
-Right-click the tray icon and pick **Connect Last.fm**. A little page opens: make a free [Last.fm API app](https://www.last.fm/api/account/create), paste the key + secret, authorize, done. After that it scrobbles automatically (now-playing + a scrobble once you're halfway through a track). Your credentials stay in a local config file, never in this repo.
+YT Music's own scrobbling is unreliable, so the app scrobbles for you. One-time setup:
+
+1. **Make a Last.fm API app** (free, instant) at [last.fm/api/account/create](https://www.last.fm/api/account/create). Give it any name, leave the **Callback URL** blank, and submit. You'll get an **API key** and a **Shared secret**, keep that page open.
+2. **Right-click the app's tray icon** (near the clock, maybe under the `^` overflow) and pick **Connect Last.fm**. A setup page opens in your browser.
+3. **Paste the API key + shared secret** into the two boxes and click **Connect**. A Last.fm tab pops up.
+4. On that tab, click **Yes, allow access**. Then go back to the setup page and click **Finish**. It should say "Connected as <you>".
+
+That's it. From then on it scrobbles automatically: it sets "now playing" when a track starts and scrobbles it once you're halfway through (or 4 minutes in, whichever comes first, per Last.fm's rules).
+
+Your key, secret, and session live in `%APPDATA%\com.lawson.ytmusic\lastfm.json` on your machine only, never in this repo. To disconnect, delete that file. To reconnect on a new track after setup, nothing to do, it just works while the app is running.
 
 ## Stream Deck plugin
 
