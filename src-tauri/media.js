@@ -8,36 +8,33 @@
 (function () {
   if (window.top !== window.self) return;
 
-  // Perceptual volume curve. YT Music maps its slider linearly to amplitude, so low
-  // numbers are still loud. Remap so the number you set stays the same but actual
-  // loudness follows (n/100)^2 (gentler than Spotify's ~cube so the low end doesn't
-  // drop to silence). Crucially we also feed the number back through YT's native
-  // setVolume so YT's own stored volume stays in sync, otherwise YT periodically
-  // re-applies its old value and Stream Deck / slider changes snap back.
-  function installVolumeCurve() {
+  // Perceptual volume curve. YT Music's slider is linear, so low numbers are still
+  // loud. We deliberately DON'T override the player's volume API: YT's native volume
+  // (0-100) stays the single source of truth, so the slider, getVolume, and the Stream
+  // Deck all read the exact same number and stay in sync. We only enforce the actual
+  // output amplitude to (volume/100)^2. It's re-applied on whatever <video> element is
+  // current (so it survives song switches, which is where it used to jump loud) and
+  // whenever the volume changes.
+  const VOL_EXP = 2;
+  function enforceVolumeCurve() {
     const p = document.querySelector('#movie_player');
     const v = document.querySelector('video');
-    if (!p || !v || !p.setVolume || p.__ytmVolCurve) return;
-    p.__ytmVolCurve = true;
-    const EXP = 2;
-    const rawSet = p.setVolume.bind(p);
-    const clamp = (n) => Math.max(0, Math.min(100, Math.round(n)));
-    let number = clamp(p.getVolume());
-    const want = () => Math.pow(number / 100, EXP);
-    p.setVolume = (d) => { number = clamp(d); rawSet(number); v.volume = want(); };
-    p.getVolume = () => number;
-    v.addEventListener('volumechange', () => {
-      if (Math.abs(v.volume - want()) < 0.0006) return; // our own curved set
-      number = clamp(v.volume * 100); // external change (slider / keyboard)
-      v.volume = want();
-    });
-    v.volume = want();
+    if (!p || !v || typeof p.getVolume !== 'function') return;
+    const curved = () => Math.pow(Math.max(0, Math.min(100, p.getVolume())) / 100, VOL_EXP);
+    const t = curved();
+    if (Math.abs(v.volume - t) > 0.0006) v.volume = t;
+    if (!v.__ytmCurve) {
+      v.__ytmCurve = true;
+      v.addEventListener('volumechange', () => {
+        const t2 = curved();
+        if (Math.abs(v.volume - t2) > 0.0006) v.volume = t2;
+      });
+    }
   }
 
   let last = '';
   let lastEmit = 0;
   function poll() {
-    installVolumeCurve();
     const p = document.querySelector('#movie_player');
     if (!p || !p.getPlayerState) return;
     let d = {};
@@ -78,5 +75,7 @@
       window.__TAURI__.event.emit('media-update', { title, artist, album, art, playing, pos, dur, volume });
     } catch (e) {}
   }
+
   setInterval(poll, 1000);
+  setInterval(enforceVolumeCurve, 250); // fast enough to catch song switches
 })();
