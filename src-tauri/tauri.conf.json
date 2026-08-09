@@ -1,0 +1,36 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "YT Music",
+  "version": "0.1.0",
+  "identifier": "com.lawson.ytmusic",
+  "build": {
+    "frontendDist": "../src"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "createUpdaterArtifacts": true,
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDcyQjJEMjM3MkMyMjNFMTMKUldRVFBpSXNOOUt5Y3RpaHBLUkFEWU02bU92eWFNbHNXNEg2RFN5MG10bjVBVFhBMlRWNk9FZEQK",
+      "endpoints": [
+        "https://github.com/oyuh/ytmusic-tauri/releases/latest/download/latest.json"
+      ]
+    }
+  }
+}

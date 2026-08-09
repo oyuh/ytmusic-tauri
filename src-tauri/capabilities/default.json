@@ -1,0 +1,25 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Window controls for the injected title bar. Scoped to the YT Music / Google auth origins and to window management only.",
+  "windows": ["main"],
+  "remote": {
+    "urls": [
+      "https://music.youtube.com",
+      "https://*.youtube.com",
+      "https://accounts.google.com",
+      "https://*.google.com"
+    ]
+  },
+  "permissions": [
+    "core:window:allow-minimize",
+    "core:window:allow-hide",
+    "core:window:allow-maximize",
+    "core:window:allow-unmaximize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-is-maximized",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging",
+    "core:event:allow-emit"
+  ]
+}

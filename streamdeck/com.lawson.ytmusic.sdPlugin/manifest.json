@@ -1,0 +1,56 @@
+{
+  "UUID": "com.lawson.ytmusic",
+  "Name": "YT Music",
+  "Version": "1.0.0",
+  "Author": "Lawson",
+  "Description": "Control YT Music (ytmusic-tauri) from your Stream Deck. Requires the YT Music app to be running.",
+  "Category": "YT Music",
+  "CategoryIcon": "icons/category",
+  "Icon": "icons/plugin",
+  "CodePath": "index.html",
+  "SDKVersion": 2,
+  "Software": { "MinimumVersion": "6.4" },
+  "OS": [{ "Platform": "windows", "MinimumVersion": "10" }],
+  "Actions": [
+    {
+      "UUID": "com.lawson.ytmusic.playpause",
+      "Name": "Play / Pause",
+      "Tooltip": "Toggle play / pause",
+      "Icon": "icons/playpause",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "icons/playpause" }]
+    },
+    {
+      "UUID": "com.lawson.ytmusic.prev",
+      "Name": "Previous",
+      "Tooltip": "Previous track",
+      "Icon": "icons/prev",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "icons/prev" }]
+    },
+    {
+      "UUID": "com.lawson.ytmusic.next",
+      "Name": "Next",
+      "Tooltip": "Next track",
+      "Icon": "icons/next",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "icons/next" }]
+    },
+    {
+      "UUID": "com.lawson.ytmusic.volup",
+      "Name": "Volume Up",
+      "Tooltip": "Volume up",
+      "Icon": "icons/volup",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "icons/volup" }]
+    },
+    {
+      "UUID": "com.lawson.ytmusic.voldown",
+      "Name": "Volume Down",
+      "Tooltip": "Volume down",
+      "Icon": "icons/voldown",
+      "Controllers": ["Keypad"],
+      "States": [{ "Image": "icons/voldown" }]
+    }
+  ]
+}
