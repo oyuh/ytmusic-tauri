@@ -38,8 +38,9 @@ async fn auto_update(app: tauri::AppHandle) {
 
 fn show_main(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
-        let _ = w.show();
+        let _ = w.set_skip_taskbar(false);
         let _ = w.unminimize();
+        let _ = w.show();
         let _ = w.set_focus();
     }
 }

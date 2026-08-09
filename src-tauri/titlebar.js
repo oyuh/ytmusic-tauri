@@ -75,8 +75,13 @@
       position: 'fixed', top: '0', right: '0', height: '64px',
       display: 'flex', alignItems: 'center', zIndex: '2147483647',
     });
-    // Minimize hides to the system tray (off the taskbar) instead of a normal minimize.
-    box.appendChild(button('minimize', () => win() && win().hide()));
+    // Minimize to the system tray: minimize + drop the taskbar button (also removes it
+    // from alt-tab). Unlike a full hide() this keeps a real window, so OBS can still
+    // find "YT Music" for Application Audio Capture while it's tucked away.
+    box.appendChild(button('minimize', () => {
+      const w = win();
+      if (w) { w.setSkipTaskbar(true); w.minimize(); }
+    }));
     box.appendChild(button('maximize', () => win() && win().toggleMaximize()));
     box.appendChild(button('close', () => win() && win().close()));
     document.body.appendChild(box);
