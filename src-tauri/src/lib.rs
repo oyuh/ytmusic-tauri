@@ -70,6 +70,7 @@ struct Status {
     volume: i32,
     title: String,
     artist: String,
+    album: String,
 }
 
 type SharedStatus = Arc<Mutex<Status>>;
@@ -79,6 +80,7 @@ type SharedStatus = Arc<Mutex<Status>>;
 struct ScrobbleState {
     artist: String,
     track: String,
+    album: String,
     started: u64,
     scrobbled: bool,
 }
@@ -326,6 +328,7 @@ pub fn run() {
                     volume: state.volume,
                     title: state.title.clone(),
                     artist: state.artist.clone(),
+                    album: state.album.clone(),
                 };
 
                 // Last.fm now-playing + scrobble (worker no-ops if not connected).
@@ -335,24 +338,33 @@ pub fn run() {
                     if new_track {
                         st.track = state.title.clone();
                         st.artist = state.artist.clone();
+                        st.album = state.album.clone();
                         st.started = unix_now();
                         st.scrobbled = false;
                         if !state.title.is_empty() {
                             let _ = lastfm_listen.send(lastfm::Msg::NowPlaying {
                                 artist: state.artist.clone(),
                                 track: state.title.clone(),
+                                album: state.album.clone(),
                             });
                         }
-                    } else if !st.scrobbled && state.dur > 30.0 && !state.title.is_empty() {
-                        // Last.fm rule: scrobble at half the track or 4 minutes, whichever first.
-                        let threshold = (state.dur * 0.5).min(240.0);
-                        if state.pos >= threshold {
-                            st.scrobbled = true;
-                            let _ = lastfm_listen.send(lastfm::Msg::Scrobble {
-                                artist: state.artist.clone(),
-                                track: state.title.clone(),
-                                ts: st.started,
-                            });
+                    } else {
+                        // Album can arrive a beat after the title; keep it fresh for the scrobble.
+                        if st.album.is_empty() && !state.album.is_empty() {
+                            st.album = state.album.clone();
+                        }
+                        if !st.scrobbled && state.dur > 30.0 && !state.title.is_empty() {
+                            // Last.fm rule: scrobble at half the track or 4 minutes, whichever first.
+                            let threshold = (state.dur * 0.5).min(240.0);
+                            if state.pos >= threshold {
+                                st.scrobbled = true;
+                                let _ = lastfm_listen.send(lastfm::Msg::Scrobble {
+                                    artist: state.artist.clone(),
+                                    track: state.title.clone(),
+                                    album: st.album.clone(),
+                                    ts: st.started,
+                                });
+                            }
                         }
                     }
                 }

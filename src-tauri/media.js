@@ -25,6 +25,17 @@
     if (md && md.artwork && md.artwork.length) art = md.artwork[md.artwork.length - 1].src;
     else if (d.video_id) art = 'https://i.ytimg.com/vi/' + d.video_id + '/hqdefault.jpg';
 
+    // Album (for Last.fm art matching). YT Music sets mediaSession.album for songs;
+    // fall back to the player-bar byline "Artist • Album • Year".
+    let album = (md && md.album) || '';
+    if (!album) {
+      const bl = document.querySelector('ytmusic-player-bar .byline, ytmusic-player-bar yt-formatted-string.byline');
+      if (bl) {
+        const parts = bl.textContent.split('•').map(s => s.trim()).filter(Boolean);
+        if (parts.length >= 3 && /^\d{4}$/.test(parts[parts.length - 1])) album = parts[parts.length - 2];
+      }
+    }
+
     let pos = 0, dur = 0, volume = 0;
     try { pos = p.getCurrentTime() || 0; dur = p.getDuration() || 0; } catch (e) {}
     try { volume = Math.round(p.getVolume ? p.getVolume() : 0); } catch (e) {}
@@ -32,12 +43,12 @@
     // Emit on any change to track / play-state / volume, and at least every ~10s
     // while playing so Rust has a fresh position for Last.fm scrobble timing.
     const now = Date.now();
-    const key = title + '|' + artist + '|' + playing + '|' + volume;
+    const key = title + '|' + artist + '|' + album + '|' + playing + '|' + volume;
     if (key === last && !(playing && now - lastEmit > 10000)) return;
     last = key;
     lastEmit = now;
     try {
-      window.__TAURI__.event.emit('media-update', { title, artist, album: '', art, playing, pos, dur, volume });
+      window.__TAURI__.event.emit('media-update', { title, artist, album, art, playing, pos, dur, volume });
     } catch (e) {}
   }
   setInterval(poll, 1000);

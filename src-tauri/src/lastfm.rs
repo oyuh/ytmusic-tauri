@@ -117,28 +117,34 @@ pub fn get_session(api_key: &str, secret: &str, token: &str) -> Result<(String, 
     Ok((key, name))
 }
 
-fn update_now_playing(cfg: &Config, artist: &str, track: &str) -> Result<(), String> {
+fn update_now_playing(cfg: &Config, artist: &str, track: &str, album: &str) -> Result<(), String> {
     let mut p = BTreeMap::new();
     p.insert("api_key".into(), cfg.api_key.clone());
     p.insert("sk".into(), cfg.session_key.clone());
     p.insert("artist".into(), artist.to_string());
     p.insert("track".into(), track.to_string());
+    if !album.is_empty() {
+        p.insert("album".into(), album.to_string());
+    }
     call("track.updateNowPlaying", p, &cfg.api_secret).map(|_| ())
 }
 
-fn scrobble(cfg: &Config, artist: &str, track: &str, ts: u64) -> Result<(), String> {
+fn scrobble(cfg: &Config, artist: &str, track: &str, album: &str, ts: u64) -> Result<(), String> {
     let mut p = BTreeMap::new();
     p.insert("api_key".into(), cfg.api_key.clone());
     p.insert("sk".into(), cfg.session_key.clone());
     p.insert("artist".into(), artist.to_string());
     p.insert("track".into(), track.to_string());
     p.insert("timestamp".into(), ts.to_string());
+    if !album.is_empty() {
+        p.insert("album".into(), album.to_string());
+    }
     call("track.scrobble", p, &cfg.api_secret).map(|_| ())
 }
 
 pub enum Msg {
-    NowPlaying { artist: String, track: String },
-    Scrobble { artist: String, track: String, ts: u64 },
+    NowPlaying { artist: String, track: String, album: String },
+    Scrobble { artist: String, track: String, album: String, ts: u64 },
     Reload,
 }
 
@@ -151,14 +157,14 @@ pub fn spawn_worker(dir: PathBuf) -> Sender<Msg> {
         for msg in rx {
             match msg {
                 Msg::Reload => cfg = load(&dir),
-                Msg::NowPlaying { artist, track } => {
+                Msg::NowPlaying { artist, track, album } => {
                     if cfg.is_connected() {
-                        let _ = update_now_playing(&cfg, &artist, &track);
+                        let _ = update_now_playing(&cfg, &artist, &track, &album);
                     }
                 }
-                Msg::Scrobble { artist, track, ts } => {
+                Msg::Scrobble { artist, track, album, ts } => {
                     if cfg.is_connected() {
-                        let _ = scrobble(&cfg, &artist, &track, ts);
+                        let _ = scrobble(&cfg, &artist, &track, &album, ts);
                     }
                 }
             }
