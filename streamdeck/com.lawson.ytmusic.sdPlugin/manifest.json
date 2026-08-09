@@ -18,7 +18,10 @@
       "Tooltip": "Toggle play / pause",
       "Icon": "icons/playpause",
       "Controllers": ["Keypad"],
-      "States": [{ "Image": "icons/playpause" }]
+      "States": [
+        { "Image": "icons/playpause" },
+        { "Image": "icons/pause" }
+      ]
     },
     {
       "UUID": "com.lawson.ytmusic.prev",

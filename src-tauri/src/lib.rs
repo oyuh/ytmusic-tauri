@@ -1,7 +1,8 @@
 use std::cell::RefCell;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use souvlaki::{
     MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, MediaPosition, PlatformConfig,
 };
@@ -9,7 +10,17 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::utils::config::Color;
 use tauri::{Listener, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::UpdaterExt;
+
+mod lastfm;
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
 
 // Check GitHub Releases for a newer version and install it silently, then restart.
 // Runs in the background on startup so it never blocks the window.
@@ -48,6 +59,28 @@ struct MediaState {
     playing: bool,
     pos: f64,
     dur: f64,
+    #[serde(default)]
+    volume: i32,
+}
+
+// Current playback snapshot, served at /status for the Stream Deck plugin.
+#[derive(Default, Clone, Serialize)]
+struct Status {
+    playing: bool,
+    volume: i32,
+    title: String,
+    artist: String,
+}
+
+type SharedStatus = Arc<Mutex<Status>>;
+
+// Tracks the current song for Last.fm scrobble timing.
+#[derive(Default)]
+struct ScrobbleState {
+    artist: String,
+    track: String,
+    started: u64,
+    scrobbled: bool,
 }
 
 // JS to run a method on YT Music's player element for an OS media-control event.
@@ -57,7 +90,7 @@ fn player_js(method: &str) -> String {
 
 // --- Local control server (for the Stream Deck plugin) ---
 // A tiny localhost HTTP server that maps GET paths to player actions. Bound to
-// 127.0.0.1 only. ponytail: no auth — any local process can reach it; fine for a
+// 127.0.0.1 only. ponytail: no auth - any local process can reach it; fine for a
 // personal app, revisit with a token if that ever matters. Fixed port.
 const CONTROL_PORT: u16 = 7897;
 
@@ -89,7 +122,49 @@ fn route_js(url: &str) -> Option<String> {
     }
 }
 
-fn start_control_server(app: tauri::AppHandle) {
+const LASTFM_SETUP_HTML: &str = include_str!("../lastfm_setup.html");
+
+fn query_param(url: &str, key: &str) -> Option<String> {
+    url.split('?').nth(1)?.split('&').find_map(|kv| {
+        let mut it = kv.splitn(2, '=');
+        if it.next()? == key {
+            it.next().map(percent_decode)
+        } else {
+            None
+        }
+    })
+}
+
+// Minimal percent-decoder - enough for the hex keys/tokens Last.fm uses (ASCII only).
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'+' => {
+                out.push(' ');
+                i += 1;
+            }
+            b'%' if i + 3 <= b.len() && u8::from_str_radix(&s[i + 1..i + 3], 16).is_ok() => {
+                out.push(u8::from_str_radix(&s[i + 1..i + 3], 16).unwrap() as char);
+                i += 3;
+            }
+            c => {
+                out.push(c as char);
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+fn start_control_server(
+    app: tauri::AppHandle,
+    status: SharedStatus,
+    config_dir: std::path::PathBuf,
+    lastfm_tx: std::sync::mpsc::Sender<lastfm::Msg>,
+) {
     std::thread::spawn(move || {
         let server = match tiny_http::Server::http(("127.0.0.1", CONTROL_PORT)) {
             Ok(s) => s,
@@ -99,12 +174,62 @@ fn start_control_server(app: tauri::AppHandle) {
             }
         };
         for req in server.incoming_requests() {
-            if let Some(js) = route_js(req.url()) {
-                if let Some(wv) = app.get_webview_window("main") {
-                    let _ = wv.eval(&js);
+            let url = req.url().to_string();
+            let path = url.split('?').next().unwrap_or("");
+            let (body, ctype) = match path {
+                "/status" => (
+                    serde_json::to_string(&*status.lock().unwrap()).unwrap_or_default(),
+                    "application/json",
+                ),
+                "/lastfm" => (LASTFM_SETUP_HTML.to_string(), "text/html"),
+                "/lastfm/status" => {
+                    let cfg = lastfm::load(&config_dir);
+                    (
+                        serde_json::json!({ "connected": cfg.is_connected(), "username": cfg.username }).to_string(),
+                        "application/json",
+                    )
                 }
+                "/lastfm/start" => {
+                    let key = query_param(&url, "key").unwrap_or_default();
+                    let secret = query_param(&url, "secret").unwrap_or_default();
+                    let mut cfg = lastfm::load(&config_dir);
+                    cfg.api_key = key.clone();
+                    cfg.api_secret = secret.clone();
+                    let _ = lastfm::save(&config_dir, &cfg);
+                    let body = match lastfm::get_token(&key, &secret) {
+                        Ok(token) => serde_json::json!({ "ok": true, "token": token, "authorize_url": lastfm::authorize_url(&key, &token) }),
+                        Err(e) => serde_json::json!({ "ok": false, "error": e }),
+                    };
+                    (body.to_string(), "application/json")
+                }
+                "/lastfm/finish" => {
+                    let token = query_param(&url, "token").unwrap_or_default();
+                    let mut cfg = lastfm::load(&config_dir);
+                    let body = match lastfm::get_session(&cfg.api_key, &cfg.api_secret, &token) {
+                        Ok((sk, name)) => {
+                            cfg.session_key = sk;
+                            cfg.username = name.clone();
+                            let _ = lastfm::save(&config_dir, &cfg);
+                            let _ = lastfm_tx.send(lastfm::Msg::Reload);
+                            serde_json::json!({ "ok": true, "username": name })
+                        }
+                        Err(e) => serde_json::json!({ "ok": false, "error": e }),
+                    };
+                    (body.to_string(), "application/json")
+                }
+                _ => {
+                    if let Some(js) = route_js(&url) {
+                        if let Some(wv) = app.get_webview_window("main") {
+                            let _ = wv.eval(&js);
+                        }
+                    }
+                    ("ok".to_string(), "text/plain")
+                }
+            };
+            let mut resp = tiny_http::Response::from_string(body);
+            if let Ok(h) = tiny_http::Header::from_bytes(&b"Content-Type"[..], ctype.as_bytes()) {
+                resp.add_header(h);
             }
-            let mut resp = tiny_http::Response::from_string("ok");
             if let Ok(h) =
                 tiny_http::Header::from_bytes(&b"Access-Control-Allow-Origin"[..], &b"*"[..])
             {
@@ -139,7 +264,7 @@ pub fn run() {
             .background_color(Color(3, 3, 3, 255))
             // Allow programmatic playback (needed for the Stream Deck "play" command) and
             // disable WebView2's built-in SMTC (HardwareMediaKeyHandling) so our souvlaki
-            // session is the only one — otherwise Windows shows a duplicate "WebView2" entry.
+            // session is the only one - otherwise Windows shows a duplicate "WebView2" entry.
             .additional_browser_args(
                 "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,HardwareMediaKeyHandling --autoplay-policy=no-user-gesture-required",
             )
@@ -178,13 +303,60 @@ pub fn run() {
 
             CONTROLS.with(|c| *c.borrow_mut() = Some(controls));
 
+            // Shared snapshot for the /status endpoint (Stream Deck button feedback).
+            let status: SharedStatus = Arc::new(Mutex::new(Status::default()));
+
+            // Last.fm: background worker + per-song scrobble tracking.
+            let config_dir = app.path().app_config_dir().unwrap_or_default();
+            let lastfm_tx = lastfm::spawn_worker(config_dir.clone());
+            let scrobble_state = Arc::new(Mutex::new(ScrobbleState::default()));
+
             // Receive playback state from the page and push it to the OS media session.
             let app_listen = app.handle().clone();
+            let status_listen = status.clone();
+            let scrobble_listen = scrobble_state.clone();
+            let lastfm_listen = lastfm_tx.clone();
             app.listen("media-update", move |event| {
                 let state: MediaState = match serde_json::from_str(event.payload()) {
                     Ok(s) => s,
                     Err(_) => return,
                 };
+                *status_listen.lock().unwrap() = Status {
+                    playing: state.playing,
+                    volume: state.volume,
+                    title: state.title.clone(),
+                    artist: state.artist.clone(),
+                };
+
+                // Last.fm now-playing + scrobble (worker no-ops if not connected).
+                {
+                    let mut st = scrobble_listen.lock().unwrap();
+                    let new_track = state.title != st.track || state.artist != st.artist;
+                    if new_track {
+                        st.track = state.title.clone();
+                        st.artist = state.artist.clone();
+                        st.started = unix_now();
+                        st.scrobbled = false;
+                        if !state.title.is_empty() {
+                            let _ = lastfm_listen.send(lastfm::Msg::NowPlaying {
+                                artist: state.artist.clone(),
+                                track: state.title.clone(),
+                            });
+                        }
+                    } else if !st.scrobbled && state.dur > 30.0 && !state.title.is_empty() {
+                        // Last.fm rule: scrobble at half the track or 4 minutes, whichever first.
+                        let threshold = (state.dur * 0.5).min(240.0);
+                        if state.pos >= threshold {
+                            st.scrobbled = true;
+                            let _ = lastfm_listen.send(lastfm::Msg::Scrobble {
+                                artist: state.artist.clone(),
+                                track: state.title.clone(),
+                                ts: st.started,
+                            });
+                        }
+                    }
+                }
+
                 let _ = app_listen.run_on_main_thread(move || {
                     CONTROLS.with(|c| {
                         let mut c = c.borrow_mut();
@@ -207,13 +379,19 @@ pub fn run() {
                 });
             });
 
-            start_control_server(app.handle().clone());
+            start_control_server(
+                app.handle().clone(),
+                status.clone(),
+                config_dir.clone(),
+                lastfm_tx.clone(),
+            );
 
             // System tray: the minimize button hides the window (leaves the taskbar);
             // the tray icon / menu brings it back. Left-click shows, menu has Show/Quit.
             let show = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
+            let lastfm = MenuItem::with_id(app, "lastfm", "Connect Last.fm…", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &quit])?;
+            let menu = Menu::with_items(app, &[&show, &lastfm, &quit])?;
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("YT Music")
@@ -221,6 +399,12 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => show_main(app),
+                    "lastfm" => {
+                        let _ = app.opener().open_url(
+                            format!("http://127.0.0.1:{CONTROL_PORT}/lastfm"),
+                            None::<&str>,
+                        );
+                    }
                     "quit" => app.exit(0),
                     _ => {}
                 })

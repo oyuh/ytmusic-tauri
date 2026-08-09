@@ -1,31 +1,71 @@
 // Stream Deck plugin for YT Music (ytmusic-tauri).
-// Each button press maps to a GET on the app's local control server. That's the
-// whole plugin — no state, no polling, so it stays fast and idle-free.
+// - keyDown on each action -> GET the app's local control server.
+// - polls /status so the play/pause button reflects state (play vs pause icon)
+//   and the volume buttons show the current volume %.
 const CONTROL_BASE = 'http://127.0.0.1:7897';
+const PLAYPAUSE = 'com.lawson.ytmusic.playpause';
+const VOLUP = 'com.lawson.ytmusic.volup';
+const VOLDOWN = 'com.lawson.ytmusic.voldown';
 
 const ROUTES = {
-  'com.lawson.ytmusic.playpause': '/playpause',
+  [PLAYPAUSE]: '/playpause',
   'com.lawson.ytmusic.prev': '/prev',
   'com.lawson.ytmusic.next': '/next',
-  'com.lawson.ytmusic.volup': '/volup',
-  'com.lawson.ytmusic.voldown': '/voldown',
+  [VOLUP]: '/volup',
+  [VOLDOWN]: '/voldown',
 };
 
-// Called by the Stream Deck host when the plugin loads.
-function connectElgatoStreamDeckSocket(inPort, inPluginUUID, inRegisterEvent, _inInfo) {
-  const ws = new WebSocket('ws://127.0.0.1:' + inPort);
+let ws = null;
+const contexts = {}; // action UUID -> Set of visible button contexts
+let lastStatus = null;
 
-  ws.onopen = () => {
-    ws.send(JSON.stringify({ event: inRegisterEvent, uuid: inPluginUUID }));
-  };
+function send(obj) {
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj));
+}
+
+function apply(action, ctx, s) {
+  if (!s) return;
+  if (action === PLAYPAUSE) {
+    send({ event: 'setState', context: ctx, payload: { state: s.playing ? 1 : 0 } });
+  } else if (action === VOLUP || action === VOLDOWN) {
+    send({ event: 'setTitle', context: ctx, payload: { title: (s.volume | 0) + '%', target: 0 } });
+  }
+}
+
+async function poll() {
+  let s;
+  try {
+    s = await (await fetch(CONTROL_BASE + '/status')).json();
+  } catch (e) {
+    return; // app not running - leave buttons as-is
+  }
+  lastStatus = s;
+  for (const action in contexts) for (const ctx of contexts[action]) apply(action, ctx, s);
+}
+
+function connectElgatoStreamDeckSocket(inPort, inPluginUUID, inRegisterEvent, _inInfo) {
+  ws = new WebSocket('ws://127.0.0.1:' + inPort);
+
+  ws.onopen = () => ws.send(JSON.stringify({ event: inRegisterEvent, uuid: inPluginUUID }));
 
   ws.onmessage = (evt) => {
-    let msg;
-    try { msg = JSON.parse(evt.data); } catch (e) { return; }
-    if (msg.event !== 'keyDown') return;
-    const path = ROUTES[msg.action];
-    if (!path) return;
-    // If the app isn't running the fetch just fails — nothing to do.
-    fetch(CONTROL_BASE + path).catch(() => {});
+    let m;
+    try { m = JSON.parse(evt.data); } catch (e) { return; }
+    switch (m.event) {
+      case 'keyDown': {
+        const path = ROUTES[m.action];
+        if (path) fetch(CONTROL_BASE + path).catch(() => {});
+        break;
+      }
+      case 'willAppear':
+        (contexts[m.action] = contexts[m.action] || new Set()).add(m.context);
+        apply(m.action, m.context, lastStatus);
+        break;
+      case 'willDisappear':
+        if (contexts[m.action]) contexts[m.action].delete(m.context);
+        break;
+    }
   };
+
+  setInterval(poll, 1500);
 }

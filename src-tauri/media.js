@@ -9,6 +9,7 @@
   if (window.top !== window.self) return;
 
   let last = '';
+  let lastEmit = 0;
   function poll() {
     const p = document.querySelector('#movie_player');
     if (!p || !p.getPlayerState) return;
@@ -24,14 +25,19 @@
     if (md && md.artwork && md.artwork.length) art = md.artwork[md.artwork.length - 1].src;
     else if (d.video_id) art = 'https://i.ytimg.com/vi/' + d.video_id + '/hqdefault.jpg';
 
-    let pos = 0, dur = 0;
+    let pos = 0, dur = 0, volume = 0;
     try { pos = p.getCurrentTime() || 0; dur = p.getDuration() || 0; } catch (e) {}
+    try { volume = Math.round(p.getVolume ? p.getVolume() : 0); } catch (e) {}
 
-    const key = title + '|' + artist + '|' + playing;
-    if (key === last) return;
+    // Emit on any change to track / play-state / volume, and at least every ~10s
+    // while playing so Rust has a fresh position for Last.fm scrobble timing.
+    const now = Date.now();
+    const key = title + '|' + artist + '|' + playing + '|' + volume;
+    if (key === last && !(playing && now - lastEmit > 10000)) return;
     last = key;
+    lastEmit = now;
     try {
-      window.__TAURI__.event.emit('media-update', { title, artist, album: '', art, playing, pos, dur });
+      window.__TAURI__.event.emit('media-update', { title, artist, album: '', art, playing, pos, dur, volume });
     } catch (e) {}
   }
   setInterval(poll, 1000);
