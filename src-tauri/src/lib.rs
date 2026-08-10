@@ -14,6 +14,7 @@ use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::UpdaterExt;
 
 mod lastfm;
+mod volmixer;
 
 fn unix_now() -> u64 {
     std::time::SystemTime::now()
@@ -277,6 +278,9 @@ pub fn run() {
             .initialization_script(include_str!("../titlebar.js"))
             .initialization_script(include_str!("../media.js"))
             .build()?;
+
+            // Show "YT Music" in the Volume Mixer instead of "Microsoft Edge WebView2".
+            volmixer::spawn();
 
             // Register the Windows media session under our own name/icon.
             let hwnd = window.hwnd()?.0 as *mut std::ffi::c_void;

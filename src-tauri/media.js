@@ -9,28 +9,42 @@
   if (window.top !== window.self) return;
 
   // Perceptual volume curve. YT Music's slider is linear, so low numbers are still
-  // loud. We deliberately DON'T override the player's volume API: YT's native volume
-  // (0-100) stays the single source of truth, so the slider, getVolume, and the Stream
-  // Deck all read the exact same number and stay in sync. We only enforce the actual
-  // output amplitude to (volume/100)^2. It's re-applied on whatever <video> element is
-  // current (so it survives song switches, which is where it used to jump loud) and
-  // whenever the volume changes.
+  // loud. We intercept the `volume` setter on HTMLMediaElement itself: every write YT
+  // makes is curved to x^2 on the way through, so there is never a moment where the
+  // element sits at the raw linear value. The getter hands back the linear value YT
+  // asked for, so the slider, getVolume, and the Stream Deck all still agree on 0-100.
+  // This runs as an init script (document start), so it's in place before YT creates
+  // any <video>, and it covers every element YT swaps in on a track change.
   const VOL_EXP = 2;
-  function enforceVolumeCurve() {
+  const desc = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'volume');
+  Object.defineProperty(HTMLMediaElement.prototype, 'volume', {
+    configurable: true,
+    enumerable: desc.enumerable,
+    get() {
+      return this.__ytmVol !== undefined ? this.__ytmVol : desc.get.call(this);
+    },
+    set(x) {
+      const lin = Math.max(0, Math.min(1, Number(x) || 0));
+      this.__ytmVol = lin;
+      desc.set.call(this, Math.pow(lin, VOL_EXP));
+    },
+  });
+
+  // A brand-new media element starts at a raw 1.0, and YT doesn't always write a volume
+  // to it before starting playback - that gap is the split-second of full blast on a
+  // track change. Seed any element we haven't seen from the player's own volume before
+  // it can make a sound. Media events don't bubble, so listen in the capture phase to
+  // catch them from every element without watching the DOM.
+  function seedVolume(e) {
+    const v = e.target;
+    if (!(v instanceof HTMLMediaElement) || v.__ytmVol !== undefined) return;
     const p = document.querySelector('#movie_player');
-    const v = document.querySelector('video');
-    if (!p || !v || typeof p.getVolume !== 'function') return;
-    const curved = () => Math.pow(Math.max(0, Math.min(100, p.getVolume())) / 100, VOL_EXP);
-    const t = curved();
-    if (Math.abs(v.volume - t) > 0.0006) v.volume = t;
-    if (!v.__ytmCurve) {
-      v.__ytmCurve = true;
-      v.addEventListener('volumechange', () => {
-        const t2 = curved();
-        if (Math.abs(v.volume - t2) > 0.0006) v.volume = t2;
-      });
-    }
+    let lin = 1;
+    try { if (p && p.getVolume) lin = Math.max(0, Math.min(100, p.getVolume())) / 100; } catch (err) {}
+    v.volume = lin; // through the setter above, so it lands curved
   }
+  document.addEventListener('loadstart', seedVolume, true);
+  document.addEventListener('play', seedVolume, true);
 
   let last = '';
   let lastEmit = 0;
@@ -77,5 +91,4 @@
   }
 
   setInterval(poll, 1000);
-  setInterval(enforceVolumeCurve, 250); // fast enough to catch song switches
 })();

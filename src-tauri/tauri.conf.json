@@ -1,7 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "YT Music",
-  "version": "0.1.6",
+  "mainBinaryName": "ytmusic",
+  "version": "0.1.7",
   "identifier": "com.lawson.ytmusic",
   "build": {
     "frontendDist": "../src"
@@ -16,6 +17,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "Lawson Hart",
+    "copyright": "Copyright © Lawson Hart",
+    "shortDescription": "YT Music desktop player",
     "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
