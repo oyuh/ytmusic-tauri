@@ -128,6 +128,16 @@ fn route_js(url: &str) -> Option<String> {
 
 const LASTFM_SETUP_HTML: &str = include_str!("../lastfm_setup.html");
 
+// Tray label doubles as the Last.fm status marker: filled dot + username when
+// connected, hollow dot + a call to action when not.
+fn lastfm_label(cfg: &lastfm::Config) -> String {
+    if cfg.is_connected() {
+        format!("● Last.fm: {}", cfg.username)
+    } else {
+        "○ Connect Last.fm…".to_string()
+    }
+}
+
 fn query_param(url: &str, key: &str) -> Option<String> {
     url.split('?').nth(1)?.split('&').find_map(|kv| {
         let mut it = kv.splitn(2, '=');
@@ -168,6 +178,7 @@ fn start_control_server(
     status: SharedStatus,
     config_dir: std::path::PathBuf,
     lastfm_tx: std::sync::mpsc::Sender<lastfm::Msg>,
+    lastfm_item: MenuItem<tauri::Wry>,
 ) {
     std::thread::spawn(move || {
         let server = match tiny_http::Server::http(("127.0.0.1", CONTROL_PORT)) {
@@ -189,14 +200,27 @@ fn start_control_server(
                 "/lastfm/status" => {
                     let cfg = lastfm::load(&config_dir);
                     (
-                        serde_json::json!({ "connected": cfg.is_connected(), "username": cfg.username }).to_string(),
+                        // Never echo the key/secret back: this server sends
+                        // Access-Control-Allow-Origin: *, so any page in any browser
+                        // could read the response.
+                        serde_json::json!({
+                            "connected": cfg.is_connected(),
+                            "username": cfg.username,
+                            "has_creds": !cfg.api_key.is_empty() && !cfg.api_secret.is_empty(),
+                        })
+                        .to_string(),
                         "application/json",
                     )
                 }
                 "/lastfm/start" => {
-                    let key = query_param(&url, "key").unwrap_or_default();
-                    let secret = query_param(&url, "secret").unwrap_or_default();
                     let mut cfg = lastfm::load(&config_dir);
+                    // Empty params = reconnecting, so reuse the saved key/secret.
+                    let key = query_param(&url, "key")
+                        .filter(|k| !k.is_empty())
+                        .unwrap_or(cfg.api_key.clone());
+                    let secret = query_param(&url, "secret")
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or(cfg.api_secret.clone());
                     cfg.api_key = key.clone();
                     cfg.api_secret = secret.clone();
                     let _ = lastfm::save(&config_dir, &cfg);
@@ -215,11 +239,23 @@ fn start_control_server(
                             cfg.username = name.clone();
                             let _ = lastfm::save(&config_dir, &cfg);
                             let _ = lastfm_tx.send(lastfm::Msg::Reload);
+                            let _ = lastfm_item.set_text(lastfm_label(&cfg));
                             serde_json::json!({ "ok": true, "username": name })
                         }
                         Err(e) => serde_json::json!({ "ok": false, "error": e }),
                     };
                     (body.to_string(), "application/json")
+                }
+                // Drops the session only - the API key/secret stay so reconnecting is
+                // just the authorize step again.
+                "/lastfm/disconnect" => {
+                    let mut cfg = lastfm::load(&config_dir);
+                    cfg.session_key.clear();
+                    cfg.username.clear();
+                    let _ = lastfm::save(&config_dir, &cfg);
+                    let _ = lastfm_tx.send(lastfm::Msg::Reload);
+                    let _ = lastfm_item.set_text(lastfm_label(&cfg));
+                    (serde_json::json!({ "ok": true }).to_string(), "application/json")
                 }
                 _ => {
                     if let Some(js) = route_js(&url) {
@@ -399,17 +435,16 @@ pub fn run() {
                 });
             });
 
-            start_control_server(
-                app.handle().clone(),
-                status.clone(),
-                config_dir.clone(),
-                lastfm_tx.clone(),
-            );
-
             // System tray: the minimize button hides the window (leaves the taskbar);
             // the tray icon / menu brings it back. Left-click shows, menu has Show/Quit.
             let show = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
-            let lastfm = MenuItem::with_id(app, "lastfm", "Connect Last.fm…", true, None::<&str>)?;
+            let lastfm = MenuItem::with_id(
+                app,
+                "lastfm",
+                lastfm_label(&lastfm::load(&config_dir)),
+                true,
+                None::<&str>,
+            )?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &lastfm, &quit])?;
             TrayIconBuilder::new()
@@ -440,6 +475,14 @@ pub fn run() {
                 })
                 .build(app)?;
 
+            start_control_server(
+                app.handle().clone(),
+                status.clone(),
+                config_dir.clone(),
+                lastfm_tx.clone(),
+                lastfm,
+            );
+
             tauri::async_runtime::spawn(auto_update(app.handle().clone()));
 
             Ok(())
@@ -450,7 +493,20 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::route_js;
+    use super::{lastfm, lastfm_label, route_js};
+
+    #[test]
+    fn label_shows_username_when_connected() {
+        let mut cfg = lastfm::Config::default();
+        assert_eq!(lastfm_label(&cfg), "○ Connect Last.fm…");
+        cfg.api_key = "k".into();
+        cfg.api_secret = "s".into();
+        cfg.username = "oyuh".into();
+        assert_eq!(lastfm_label(&cfg), "○ Connect Last.fm…"); // no session yet
+        cfg.session_key = "sk".into();
+        assert_eq!(lastfm_label(&cfg), "● Last.fm: oyuh");
+    }
+
 
     #[test]
     fn routes_map_correctly() {

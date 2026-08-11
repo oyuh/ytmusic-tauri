@@ -5558,7 +5558,7 @@ dependencies = [
 
 [[package]]
 name = "ytmusic"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "md5",
  "reqwest 0.12.28",

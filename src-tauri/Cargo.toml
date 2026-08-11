@@ -1,6 +1,6 @@
 [package]
 name = "ytmusic"
-version = "0.1.7"
+version = "0.1.8"
 description = "YT Music desktop player"
 authors = ["Lawson Hart"]
 edition = "2021"

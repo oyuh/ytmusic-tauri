@@ -2,71 +2,105 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>Connect Last.fm - YT Music</title>
+    <title>Last.fm - YT Music</title>
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;700&display=swap"
+    />
     <style>
-      body { font-family: system-ui, sans-serif; background: #111; color: #eee; max-width: 520px; margin: 40px auto; padding: 0 20px; }
-      h2 { margin-bottom: 4px; }
+      /* Plus Jakarta Sans is the free stand-in for Last.fm's Matter (paid, Displaay).
+         Inter is installed locally, so the page still looks right with no internet. */
+      body { font-family: 'Plus Jakarta Sans', Inter, Arial, sans-serif; background: #111; color: #eee; max-width: 520px; margin: 40px auto; padding: 0 20px; }
+      button, input { font-family: inherit; } /* form controls don't inherit it */
+      h2 { font-size: 32px; margin-bottom: 4px; }
       label { font-size: 13px; color: #bbb; }
       input { width: 100%; box-sizing: border-box; padding: 9px; margin: 6px 0 14px; background: #222; border: 1px solid #444; color: #eee; border-radius: 6px; }
       button { background: #d51007; color: #fff; border: 0; padding: 10px 18px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+      button.ghost { background: transparent; border: 1px solid #555; color: #ddd; }
       a { color: #e8998d; }
       .muted { color: #999; font-size: 13px; }
       .ok { color: #4caf50; }
       .err { color: #ff6b6b; }
       .step { margin: 18px 0; }
+      .who { font-size: 18px; margin: 10px 0 2px; }
+      .dot { color: #4caf50; }
     </style>
   </head>
   <body>
-    <h2>Connect Last.fm</h2>
-    <div id="status" class="muted">…</div>
+    <h2>Last.fm</h2>
 
-    <div class="step">
-      <p class="muted">
-        1. Make a free Last.fm API app at
-        <a href="https://www.last.fm/api/account/create" target="_blank">last.fm/api/account/create</a>
-        (Callback URL can be blank), then paste the API key + shared secret here.
-      </p>
-      <label>API key</label>
-      <input id="key" autocomplete="off" spellcheck="false" />
-      <label>Shared secret</label>
-      <input id="secret" autocomplete="off" spellcheck="false" />
-      <button onclick="start()">Connect</button>
+    <!-- Connected view -->
+    <div id="connected" class="step" style="display: none">
+      <div class="who"><span class="dot">●</span> <b id="username"></b></div>
+      <p class="muted">Scrobbling is on. <a id="profile" href="#" target="_blank">View profile</a></p>
+      <button class="ghost" onclick="disconnect()">Disconnect</button>
     </div>
 
-    <div id="step2" class="step" style="display: none">
-      <p>2. A Last.fm tab opened - click <b>Yes, allow access</b> there, then come back and hit Finish.</p>
-      <button onclick="finish()">Finish</button>
+    <!-- Setup view -->
+    <div id="setup" style="display: none">
+      <div class="muted">Not connected.</div>
+      <div class="step">
+        <p class="muted">
+          1. Make a free Last.fm API app at
+          <a href="https://www.last.fm/api/account/create" target="_blank">last.fm/api/account/create</a>
+          (Callback URL can be blank), then paste the API key + shared secret here.
+        </p>
+        <label>API key</label>
+        <input id="key" autocomplete="off" spellcheck="false" />
+        <label>Shared secret</label>
+        <input id="secret" autocomplete="off" spellcheck="false" />
+        <button onclick="start()">Connect</button>
+        <button id="reconnect" class="ghost" style="display: none" onclick="start(true)">Use saved key</button>
+      </div>
+
+      <div id="step2" class="step" style="display: none">
+        <p>2. A Last.fm tab opened - click <b>Yes, allow access</b> there, then come back and hit Finish.</p>
+        <button onclick="finish()">Finish</button>
+      </div>
     </div>
 
     <div id="msg" class="step"></div>
 
     <script>
       let token = '';
+      function el(id) { return document.getElementById(id); }
+      function msg(t, c) { const m = el('msg'); m.textContent = t; m.className = 'step ' + (c || ''); }
+
       async function refresh() {
-        try {
-          const s = await (await fetch('/lastfm/status')).json();
-          document.getElementById('status').innerHTML = s.connected
-            ? '<span class="ok">Connected as ' + s.username + '.</span> Scrobbling is on.'
-            : 'Not connected yet.';
-        } catch (e) {}
+        let s;
+        try { s = await (await fetch('/lastfm/status')).json(); }
+        catch (e) { msg('Can\'t reach YT Music - is the app still running?', 'err'); return; }
+        el('connected').style.display = s.connected ? 'block' : 'none';
+        el('setup').style.display = s.connected ? 'none' : 'block';
+        el('username').textContent = s.username;
+        el('profile').href = 'https://www.last.fm/user/' + encodeURIComponent(s.username);
+        el('reconnect').style.display = !s.connected && s.has_creds ? 'inline-block' : 'none';
       }
-      function msg(t, c) { const m = document.getElementById('msg'); m.textContent = t; m.className = 'step ' + (c || ''); }
-      async function start() {
-        const key = document.getElementById('key').value.trim();
-        const secret = document.getElementById('secret').value.trim();
-        if (!key || !secret) { msg('Enter both the key and the shared secret.', 'err'); return; }
+
+      async function start(saved) {
+        const key = saved ? '' : el('key').value.trim();
+        const secret = saved ? '' : el('secret').value.trim();
+        if (!saved && (!key || !secret)) { msg('Enter both the key and the shared secret.', 'err'); return; }
         const r = await (await fetch('/lastfm/start?key=' + encodeURIComponent(key) + '&secret=' + encodeURIComponent(secret))).json();
         if (!r.ok) { msg(r.error || 'Could not get a token.', 'err'); return; }
         token = r.token;
         window.open(r.authorize_url, '_blank');
-        document.getElementById('step2').style.display = 'block';
+        el('step2').style.display = 'block';
         msg('', '');
       }
+
       async function finish() {
         const r = await (await fetch('/lastfm/finish?token=' + encodeURIComponent(token))).json();
-        if (r.ok) { msg('Connected as ' + r.username + '! You can close this tab.', 'ok'); refresh(); }
+        if (r.ok) { msg('', ''); refresh(); }
         else { msg(r.error || 'Did you click allow on Last.fm first?', 'err'); }
       }
+
+      async function disconnect() {
+        await fetch('/lastfm/disconnect');
+        msg('Disconnected. Scrobbling is off.', '');
+        refresh();
+      }
+
       refresh();
     </script>
   </body>
